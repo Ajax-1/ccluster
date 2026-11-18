@@ -516,7 +516,8 @@ per-tenant credentials.
 ### Argo CD API token
 
 The operator reads Applications' resource trees, live manifests and events from
-argocd-server's API as `ccluster-cp`, a read-only Argo CD account. It authenticates with a
+argocd-server's API as `ccluster-cp`, an Argo CD account that may read every Application
+and delete the old objects of three kinds (step 2). It authenticates with a
 token stored under the key `token` of Secret `ccluster-cp-argocd-token` (`--argocd-token-secret`)
 in the Argo CD namespace (`--argocd-namespace`). The token does not expire and is created
 once. The operator reaches argocd-server through its Service in the same namespace,
@@ -549,8 +550,11 @@ With an existing Argo CD in the same cluster (`ARGOCD=false`), create the token 
 may update the account, such as admin or an SSO user with `role:admin`:
 
 1. Declare the account in that Argo CD's `argocd-cm`: `accounts.ccluster-cp: apiKey`.
-2. Grant it read access in `argocd-rbac-cm`, for example as its own key
-   `policy.ccluster-cp.csv`: `p, ccluster-cp, applications, get, */*, allow`.
+2. Grant it access in `argocd-rbac-cm`, for example as its own key
+   `policy.ccluster-cp.csv`, with the four lines of the cp chart's `values.yaml`
+   (`argo-cd.configs.rbac`): read every Application, and delete ExternalSecrets,
+   ConfigMaps and ResourceClaimTemplates the operator deletes after rollout. Without
+   the delete lines those old objects stay, and the operator logs the 403.
 3. Generate a token: `argocd account generate-token --account ccluster-cp`.
 4. Store it: `kubectl -n <argocd-namespace> create secret generic ccluster-cp-argocd-token
    --from-literal=token=<token>`.

@@ -55,6 +55,14 @@ type ResourceNode struct {
 	Info []InfoItem `json:"info,omitempty"`
 }
 
+// pendingDeletion is the health message Argo CD gives every object being deleted.
+const pendingDeletion = "Pending deletion"
+
+// Terminating reports whether the object is being deleted.
+func (n ResourceNode) Terminating() bool {
+	return n.Health != nil && n.Health.Message == pendingDeletion
+}
+
 // InfoItem is one named fact in a ResourceNode's Info.
 type InfoItem struct {
 	Name  string `json:"name"`
