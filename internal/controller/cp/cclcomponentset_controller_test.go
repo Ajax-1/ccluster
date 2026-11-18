@@ -2070,16 +2070,7 @@ var _ = Describe("CCLComponentSet Controller", func() {
 			})
 
 			It("should delete a finished component's old objects of the deletable kinds", func() {
-				node := func(group, kind, name string, health *apiclient.HealthStatus) apiclient.ResourceNode {
-					return apiclient.ResourceNode{ResourceRef: apiclient.ResourceRef{
-						Group: group, Version: "v1", Kind: kind, Namespace: "argo-rollouts", Name: name, UID: name,
-					}, Health: health}
-				}
-				argoCD := &fakeArgoCD{tree: apiclient.ResourceTree{Nodes: []apiclient.ResourceNode{
-					node("external-secrets.io", "ExternalSecret", "web-env-1", &apiclient.HealthStatus{Status: "Healthy"}),
-					node("", "ConfigMap", "web-r1", &apiclient.HealthStatus{Status: "Progressing", Message: "Pending deletion"}),
-					node("policy", "PodDisruptionBudget", "web", &apiclient.HealthStatus{Status: "Healthy"}),
-				}}}
+				argoCD := &fakeArgoCD{}
 				judgeWith(argoCD)
 
 				// Argo CD lists every object of the comparison; requiresPruning marks those the
@@ -2104,10 +2095,10 @@ var _ = Describe("CCLComponentSet Controller", func() {
 				reconcileAndGet()
 				Expect(argoCD.deleted()).To(BeEmpty())
 
-				By("deleting them once it has, except one already being deleted and a kind it does not delete")
+				By("deleting them once it has, except a kind it does not delete")
 				firstHealth = catalogs.Health{Status: cclusternvidiacomv1alpha1.ComponentHealthHealthy}
 				reconcileAndGet()
-				Expect(argoCD.deleted()).To(Equal([]string{"ExternalSecret/web-env-1"}))
+				Expect(argoCD.deleted()).To(Equal([]string{"ExternalSecret/web-env-1", "ConfigMap/web-r1"}))
 
 				By("retrying a failed delete, without holding back the next component")
 				argoCD.deleteErr = &apiclient.APIError{Op: "resource", StatusCode: 403, Message: "permission denied"}

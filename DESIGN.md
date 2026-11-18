@@ -978,8 +978,9 @@ event brings the next pass. Old objects of other kinds stay, since a chart that 
 is per component, not per set: only the component's own pods read these objects, and
 once it is finished they all run the current spec.
 
-- **Already going.** One whose tree node Argo CD reports `Pending deletion` is not deleted
-  again.
+- **Already going.** One still listed while it is being deleted, such as an
+  ExternalSecret waiting for its Secret, is deleted again on each pass, which changes
+  nothing.
 - **Failure.** A failed delete fails the pass, which logs and retries it; it holds back
   no component.
 - **Health.** Argo CD's aggregate health counts old objects, so an old ExternalSecret that
@@ -993,8 +994,8 @@ once it is finished they all run the current spec.
 The costs: an existing Argo CD needs the account's three delete lines added by hand
 ([Development: Argo CD API token](docs/development.md#argo-cd-api-token)), and without
 them every delete fails with 403 and the old objects stay, shown only in the operator's
-log. An old object whose finalizer never finishes shows only in Argo CD, as `Pending
-deletion`. And while ESO's controller is down, an ExternalSecret in wave -1 gets no
+log. An old object whose finalizer never finishes is deleted again, and logged, on every
+pass. And while ESO's controller is down, an ExternalSecret in wave -1 gets no
 status, so the sync operation stays open and the Application's next spec waits behind it.
 
 ### Teardown runs in reverse, one at a time

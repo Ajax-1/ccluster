@@ -45,17 +45,6 @@ func treeKey(r catalogs.ResourceRef) objectKey {
 	return objectKey{Group: r.Group, Kind: r.Kind, Namespace: r.Namespace, Name: r.Name}
 }
 
-// deletableOldObjects returns application's old objects of deletableKinds.
-func deletableOldObjects(application *argocdv1alpha1.Application) []argocdv1alpha1.ResourceStatus {
-	var deletable []argocdv1alpha1.ResourceStatus
-	for _, r := range application.OldObjects() {
-		if slices.Contains(deletableKinds, schema.GroupKind{Group: r.Group, Kind: r.Kind}) {
-			deletable = append(deletable, r)
-		}
-	}
-	return deletable
-}
-
 // withoutOldObjects leaves application's old objects, and what they own, out of observed.
 // Argo CD's aggregate health still counts them, so where it is worse than every rendered
 // object left, it becomes the worst of those. See DESIGN.md, "Objects deleted after rollout".
@@ -105,9 +94,10 @@ func withoutOldObjects(
 	return observed
 }
 
-// deleteOldObjects deletes the deletable old objects of finished, the Applications of the
-// components that have finished rolling out, skipping those already being deleted. All its
-// requests share one readTimeout. See DESIGN.md, "Objects deleted after rollout".
+// deleteOldObjects deletes the old objects of deletableKinds of finished, the Applications
+// of the components that have finished rolling out. One already being deleted is deleted
+// again, which changes nothing. All its requests share one readTimeout. See DESIGN.md,
+// "Objects deleted after rollout".
 func (r *CCLComponentSetReconciler) deleteOldObjects(
 	ctx context.Context, finished []*argocdv1alpha1.Application,
 ) error {
@@ -120,28 +110,11 @@ func (r *CCLComponentSetReconciler) deleteOldObjects(
 
 	var errs []error
 	for _, application := range finished {
-		old := deletableOldObjects(application)
-		if len(old) == 0 {
-			continue
-		}
-		app := applicationRef(application)
-		tree, err := r.ArgoCD.ResourceTree(ctx, app)
-		if err != nil {
-			errs = append(errs, fmt.Errorf("reading the resource tree of Application %s: %w", application.Name, err))
-			continue
-		}
-		terminating := map[objectKey]bool{}
-		for _, node := range tree.Nodes {
-			if node.Terminating() {
-				terminating[treeKey(catalogRef(node.ResourceRef))] = true
-			}
-		}
-
-		for _, obj := range old {
-			if terminating[statusKey(obj)] {
+		for _, obj := range application.OldObjects() {
+			if !slices.Contains(deletableKinds, schema.GroupKind{Group: obj.Group, Kind: obj.Kind}) {
 				continue
 			}
-			err := r.ArgoCD.DeleteResource(ctx, app, apiclient.ResourceRef{
+			err := r.ArgoCD.DeleteResource(ctx, applicationRef(application), apiclient.ResourceRef{
 				Group: obj.Group, Version: obj.Version, Kind: obj.Kind, Namespace: obj.Namespace, Name: obj.Name,
 			})
 			if errors.Is(err, apiclient.ErrResourceGone) {
@@ -152,7 +125,7 @@ func (r *CCLComponentSetReconciler) deleteOldObjects(
 					obj.Kind, obj.Namespace, obj.Name, application.Name, err))
 				continue
 			}
-			log.Info("Deleted old object of Argo CD Application", "application", application.Name,
+			log.Info("Requested deletion of old object of Argo CD Application", "application", application.Name,
 				"namespace", application.Namespace, "kind", obj.Kind, "object", obj.Namespace+"/"+obj.Name)
 		}
 	}
