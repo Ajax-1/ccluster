@@ -74,6 +74,8 @@ type CCLClusterConfigReconciler struct {
 // +kubebuilder:rbac:groups=discovery.k8s.io,resources=endpointslices,verbs=get;list;watch
 // +kubebuilder:rbac:groups=admissionregistration.k8s.io,resources=validatingwebhookconfigurations,verbs=get;list;watch
 // +kubebuilder:rbac:groups=external-secrets.io,resources=externalsecrets,verbs=get;list;watch
+// +kubebuilder:rbac:groups=apiextensions.k8s.io,resources=customresourcedefinitions,verbs=get;list;watch
+// +kubebuilder:rbac:groups=coordination.k8s.io,resources=leases,verbs=get;list
 
 // Reconcile runs every cluster_base component's Verifier against the CCLClusterConfig and
 // records the outcome as its Verified condition, and reports the cluster's labelled
@@ -136,8 +138,8 @@ type failure struct {
 // and the charts whose Verifier returned an error, in registration order.
 //
 // The Verifiers run concurrently. Each is an independent set of reads through the
-// manager's cached client, which is safe for concurrent use, so the pass takes as long
-// as the slowest check rather than the sum of all of them. Results are collected by
+// manager's client, which is safe for concurrent use and cached except for Leases, so
+// the pass takes as long as the slowest check rather than the sum of all of them. Results are collected by
 // position in registration order so the failing list, and with it the condition message,
 // is deterministic whatever order the goroutines finish in.
 //
@@ -320,8 +322,8 @@ func (r *CCLClusterConfigReconciler) setStatus(
 // singleton, and with no predicate on what an update changed, since the address arrives
 // as a status update. An update passes when either side carries the label, so removing
 // it clears the entry at once. The cache itself is not scoped: it holds every Service,
-// as it holds every object of each kind read, so a Verifier reading a Service sees them
-// all.
+// as it holds every object of each cached kind read, so a Verifier reading a Service
+// sees them all. Leases are not cached: Verifiers read them from the API server.
 //
 // CCLClusterConfig updates are filtered to spec changes. The controller's own status
 // patch is an update too, and without the filter every patch would rerun every Verifier;
