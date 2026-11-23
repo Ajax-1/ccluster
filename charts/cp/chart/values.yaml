@@ -138,13 +138,17 @@ manager:
 
   ## Resource limits and requests
   ##
+  ## The manager caches every Secret and Application in the cluster, so its memory
+  ## grows with the cluster, not only with ccluster's own objects. The operator sets
+  ## the Go runtime's memory limit to 90% of the container's; a GOMEMLIMIT in
+  ## envOverrides, such as 400MiB, replaces it.
   resources:
     limits:
       cpu: 500m
-      memory: 128Mi
+      memory: 512Mi
     requests:
       cpu: 10m
-      memory: 64Mi
+      memory: 128Mi
 
   ## Manager pod's affinity
   ##
