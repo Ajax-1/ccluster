@@ -77,18 +77,26 @@ func checkNamespace(namespace string) error {
 	return nil
 }
 
-// controlPlaneRESTConfig returns the client config of the control plane saved by init.
-func controlPlaneRESTConfig() (*rest.Config, error) {
+// controlPlaneRESTConfig returns the kubeconfig context and client config of the control
+// plane saved by init, after checking that it serves the ccluster API.
+func controlPlaneRESTConfig() (string, *rest.Config, error) {
 	controlPlane, err := loadControlPlane()
 	if err != nil {
-		return nil, err
+		return "", nil, err
 	}
-	return restConfig(controlPlane)
+	cfg, err := restConfig(controlPlane)
+	if err != nil {
+		return "", nil, err
+	}
+	if err := servesInfraPlanes(cfg, controlPlane); err != nil {
+		return "", nil, err
+	}
+	return controlPlane, cfg, nil
 }
 
 // controlPlaneClient returns a client for namespace on the control plane saved by init.
 func controlPlaneClient(namespace string) (*cclclient.Client, error) {
-	cfg, err := controlPlaneRESTConfig()
+	_, cfg, err := controlPlaneRESTConfig()
 	if err != nil {
 		return nil, err
 	}
