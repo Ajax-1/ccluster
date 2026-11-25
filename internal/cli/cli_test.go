@@ -227,10 +227,40 @@ func TestRegisterCreatesAdminTokenAndInfraPlane(t *testing.T) {
 	if plane.Spec.ClusterCredentialsRef.Name != "edge-1-credentials" {
 		t.Errorf("clusterCredentialsRef = %q, want edge-1-credentials", plane.Spec.ClusterCredentialsRef.Name)
 	}
-	credentials := credentialsConfig(t, namespace, "edge-1")
+	credentials := credentialsConfig(t, namespace)
 	if credentials.server != apiServer.Host || credentials.config.BearerToken != token ||
 		string(credentials.config.TLSClientConfig.CAData) != string(caCert) {
 		t.Errorf("credentials = %+v, want the kubeconfig's server, the token and the CA", credentials)
+	}
+}
+
+// register copies the infra-plane context's tls-server-name into the credentials, so the
+// control plane checks the API server's certificate against the same name kubectl does.
+func TestRegisterKeepsTheTLSServerName(t *testing.T) {
+	setUpInitialized(t)
+	namespace := newNamespaceName()
+	fillTokenSecret(t)
+	reportClusterConfig(t, namespace, applied)
+
+	if _, err := run(t, "register", "edge-1", "--namespace", namespace, "--infra-plane", "ip-sni"); err != nil {
+		t.Fatal(err)
+	}
+	if got := credentialsConfig(t, namespace).config.TLSClientConfig.ServerName; got != "localhost" {
+		t.Errorf("tlsClientConfig.serverName = %q, want the context's tls-server-name localhost", got)
+	}
+}
+
+func TestRegisterWithoutTLSServerNameLeavesItUnset(t *testing.T) {
+	setUpInitialized(t)
+	namespace := newNamespaceName()
+	fillTokenSecret(t)
+	reportClusterConfig(t, namespace, applied)
+
+	if _, err := run(t, "register", "edge-1", "--namespace", namespace, "--infra-plane", "ip"); err != nil {
+		t.Fatal(err)
+	}
+	if got := credentialsConfig(t, namespace).config.TLSClientConfig.ServerName; got != "" {
+		t.Errorf("tlsClientConfig.serverName = %q, want it unset", got)
 	}
 }
 
@@ -249,7 +279,7 @@ func TestRegisterAgainReusesTheTokenAndHonoursServer(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	credentials := credentialsConfig(t, namespace, "edge-1")
+	credentials := credentialsConfig(t, namespace)
 	if credentials.server != "https://edge-1:6443" || credentials.config.BearerToken != token {
 		t.Errorf("credentials = %+v, want server https://edge-1:6443 and the same token", credentials)
 	}
@@ -458,6 +488,12 @@ func setUp(t *testing.T) string {
 		Server:                   apiServer.Host,
 		CertificateAuthorityData: apiServer.CAData,
 	}
+	// The same API server, reached with a tls-server-name the serving certificate names.
+	kubeconfig.Clusters["envtest-sni"] = &clientcmdapi.Cluster{
+		Server:                   apiServer.Host,
+		CertificateAuthorityData: apiServer.CAData,
+		TLSServerName:            "localhost",
+	}
 	kubeconfig.Clusters["bare"] = &clientcmdapi.Cluster{Server: bare.URL}
 	kubeconfig.AuthInfos["envtest"] = &clientcmdapi.AuthInfo{
 		ClientCertificateData: apiServer.CertData,
@@ -468,6 +504,7 @@ func setUp(t *testing.T) string {
 	for _, name := range []string{"cp", "ip"} {
 		kubeconfig.Contexts[name] = &clientcmdapi.Context{Cluster: "envtest", AuthInfo: "envtest"}
 	}
+	kubeconfig.Contexts["ip-sni"] = &clientcmdapi.Context{Cluster: "envtest-sni", AuthInfo: "envtest"}
 	kubeconfig.Contexts["bare"] = &clientcmdapi.Context{Cluster: "bare", AuthInfo: "bare"}
 	kubeconfigPath := filepath.Join(dir, "kubeconfig")
 	if err := clientcmd.WriteToFile(*kubeconfig, kubeconfigPath); err != nil {
@@ -640,11 +677,12 @@ type credentials struct {
 	config cclclient.ClusterConfig
 }
 
-func credentialsConfig(t *testing.T, namespace, plane string) credentials {
+// credentialsConfig reads the credentials Secret register writes for the edge-1 cluster.
+func credentialsConfig(t *testing.T, namespace string) credentials {
 	t.Helper()
 
 	secret, err := kubeClient.CoreV1().Secrets(namespace).Get(t.Context(),
-		cclclient.CredentialsSecretName(plane), metav1.GetOptions{})
+		cclclient.CredentialsSecretName("edge-1"), metav1.GetOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
