@@ -110,15 +110,33 @@ func RESTConfig(secret *corev1.Secret, local *rest.Config) (*rest.Config, error)
 		Timeout: RequestTimeout,
 	}
 	if cfg.ProxyURL != "" {
-		proxyURL, err := url.Parse(cfg.ProxyURL)
+		proxyURL, err := parseProxyURL(cfg.ProxyURL)
 		if err != nil {
 			// Not wrapped: the URL can carry proxy credentials.
-			return nil, fmt.Errorf("%w: proxyUrl of Secret %s/%s is not a valid URL",
+			return nil, fmt.Errorf("%w: proxyUrl of Secret %s/%s must be a valid http, https or socks5 URL",
 				ErrInvalidCredentials, secret.Namespace, secret.Name)
 		}
 		restConfig.Proxy = http.ProxyURL(proxyURL)
 	}
 	return restConfig, nil
+}
+
+// parseProxyURL validates a cluster Secret's proxyUrl the way Argo CD does, allowing only
+// http, https and socks5 URLs with a host.
+func parseProxyURL(raw string) (*url.URL, error) {
+	proxyURL, err := url.Parse(raw)
+	if err != nil {
+		return nil, err
+	}
+	switch proxyURL.Scheme {
+	case "http", "https", "socks5":
+	default:
+		return nil, errors.New("unsupported proxy scheme")
+	}
+	if proxyURL.Host == "" {
+		return nil, errors.New("proxy URL has no host")
+	}
+	return proxyURL, nil
 }
 
 // ClientFactory returns a client for the infra-plane cluster a credentials Secret
