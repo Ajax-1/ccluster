@@ -293,15 +293,32 @@ func TestGetComponentSetPrefersHealthMessageAndListsRemovedComponents(t *testing
 	setUpInitialized(t)
 	namespace := newNamespaceName()
 	client := newTestClient(t, namespace)
-	applyComponentSet(t, client)
+
+	// Start at generation 1 without db, while status still records db, old-pending and
+	// old-deleting as being removed.
+	if _, err := client.ApplyComponentSet(t.Context(), "base", []cclusternvidiacomv1alpha1.ComponentSpec{
+		{
+			Name:           "keda",
+			InfraPlaneRef:  cclusternvidiacomv1alpha1.LocalObjectReference{Name: "edge-1"},
+			ComponentEntry: cclusternvidiacomv1alpha1.ComponentEntry{Chart: "catalogs/cluster_base/keda", Namespace: "keda"},
+		},
+		{
+			Name:           "queue",
+			InfraPlaneRef:  cclusternvidiacomv1alpha1.LocalObjectReference{Name: "edge-1"},
+			ComponentEntry: cclusternvidiacomv1alpha1.ComponentEntry{Chart: "catalogs/resources/queue", Namespace: "queue"},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	const generation = 1
 	status := cclusterac.CCLComponentSetStatus().WithObservedGeneration(generation).
 		WithComponentSyncStatuses(
 			cclusterac.ComponentSyncStatus().WithName("keda").WithComparedToMatchesSpec(true).
 				WithSync("Synced").WithMessage("sync finished"),
-			// db is in the spec, so a stale removal entry must not list it as removed.
-			cclusterac.ComponentSyncStatus().WithName("db").WithComparedToMatchesSpec(true).
+			// db is being removed at generation 1 and added back at generation 2 below,
+			// so its stale removal entry must not list it a second time as removed.
+			cclusterac.ComponentSyncStatus().WithName("db").WithComparedToMatchesSpec(false).
 				WithSync("Synced").WithMessage("sync message").
 				WithRemoval(cclusternvidiacomv1alpha1.ComponentRemovalDeletePending),
 			cclusterac.ComponentSyncStatus().WithName("old-pending").WithComparedToMatchesSpec(false).
@@ -330,20 +347,34 @@ func TestGetComponentSetPrefersHealthMessageAndListsRemovedComponents(t *testing
 		t.Fatal(err)
 	}
 
+	// Re-add db in generation 2 before the operator reconciles the new spec.
+	applyComponentSet(t, client)
+
 	out, err := run(t, "get", "cs", "base", "-n", namespace)
 	if err != nil {
 		t.Fatal(err)
 	}
-	expectLines(t, out,
-		"1 keda catalogs/cluster_base/keda edge-1 keda Synced Degraded Pod keda-0: back-off",
-		"2 db catalogs/deployments/db edge-1 db Synced Healthy sync message",
+	expectLines(t, out, "Generation: 2 (observed 1)")
+
+	_, componentsTable, found := strings.Cut(out, "Components:\n")
+	if !found {
+		t.Fatalf("printed\n%s\nwant a Components: section", out)
+	}
+	got := tableRows(componentsTable)
+	want := []string{
+		"# NAME CHART INFRAPLANE NAMESPACE SYNC HEALTH MESSAGE",
+		"1 keda catalogs/cluster_base/keda edge-1 keda Synced (stale) Degraded Pod keda-0: back-off",
+		"2 db catalogs/deployments/db edge-1 db Synced (stale) Healthy sync message",
 		"3 queue catalogs/resources/queue edge-1 queue - -",
 		"- old-pending - - - DeletePending Progressing waiting to delete",
 		"- old-deleting - - - Deleting - deleting resources",
-	)
-	for line := range strings.Lines(out) {
-		if strings.HasPrefix(strings.Join(strings.Fields(line), " "), "- db ") {
-			t.Errorf("printed\n%s\ndb is in the spec and must not appear as a removed component", out)
+	}
+	if len(got) != len(want) {
+		t.Fatalf("Components table printed\n%s\ngot %d rows, want %d", componentsTable, len(got), len(want))
+	}
+	for i, wantRow := range want {
+		if gotRow := strings.Join(got[i], " "); gotRow != wantRow {
+			t.Errorf("Components row %d = %q, want %q", i, gotRow, wantRow)
 		}
 	}
 }
